@@ -1,6 +1,5 @@
 const { ActivityType } = require("discord.js");
 const isOwner = require("../functions/isOwner.js");
-const db = require("quick.db");
 
 module.exports = {
     name: "setactivity",
