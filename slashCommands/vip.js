@@ -17,7 +17,7 @@ module.exports = {
     const guildOwnerID = interaction.guild.ownerId;
     if (
       guildOwnerID !== interaction.user.id &&
-      !(await isOwner(interaction.user.id, db))
+      !(await isOwner(interaction.user.id, interaction.guild, db))
     ) {
       return await interaction.reply({
         content: "Invalid permissions",

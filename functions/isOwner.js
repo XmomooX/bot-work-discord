@@ -1,4 +1,5 @@
-module.exports = async function isOwner(userid, db) {
+module.exports = async function isOwner(userid, guildId, db) {
   const isOwner = await db.get(`owners.${userid}`);
-  return !!isOwner;
+  const isGuildOwner = await db.get(`guilds.${guildId}.owner`);
+  return !!isOwner || isGuildOwner == userid;
 };

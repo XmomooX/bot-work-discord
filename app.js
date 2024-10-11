@@ -1,4 +1,5 @@
-const { Client, Events, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits } = require("discord.js");
+const Discord = require("discord.js-selfbot-v13");
 const { config } = require("dotenv");
 const fs = require("fs");
 const { QuickDB } = require("quick.db");
@@ -13,8 +14,10 @@ const client = new Client({
         return GatewayIntentBits[a];
     }),
 });
+const selfbotclient = new Discord.Client();
 
 module.exports.Client = client;
+module.exports.sbClient = selfbotclient;
 module.exports.database = db;
 //events handler
 fs.readdirSync("./events/").forEach((file) => {
@@ -34,3 +37,4 @@ fs.readdirSync("./events/").forEach((file) => {
 
 //login to bot
 client.login(process.env.TOKEN);
+selfbotclient.login(process.env.SELFBOT_TOKEN);

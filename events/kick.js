@@ -3,10 +3,16 @@ const Client = require("../app").Client;
 const isTrusted = require("../functions/isTrusted");
 const isOwner = require("../functions/isOwner");
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const lockdown = require("../functions/lockdown");
 
 Client.on("guildMemberRemove", async (member) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
+    if ((await db.get(`state.${member.guild.id}`)) === "danger") {
+        return lockdown(member.guild, db);
+    }
+
+    await db.set(`state.${member.guild.id}`, "stable");
     const limitslog = await db.get(`limitschannel.${member.guild.id}`);
     const limitschannel = member.guild.channels.cache.get(limitslog);
 
@@ -16,14 +22,10 @@ Client.on("guildMemberRemove", async (member) => {
     const banlog = await db.get(`banchannel.${member.guild.id}`);
     const banchannel = member.guild.channels.cache.get(banlog);
 
-    const fetchedLogs = await member.guild.fetchAuditLogs({
-        limit: 1,
-    });
-
+    const fetchedLogs = await member.guild.fetchAuditLogs({ limit: 1 });
     const banLog = fetchedLogs.entries.find(
         (log) => log.action === 22 && log.target.id === member.id,
     );
-
     const kickLog = fetchedLogs.entries.find(
         (log) => log.action === 20 && log.target.id === member.id,
     );
@@ -31,8 +33,8 @@ Client.on("guildMemberRemove", async (member) => {
     if (kickLog) {
         const { executor } = kickLog;
         if (executor.bot) return;
-        const guildMember = member.guild.members.cache.get(executor.id);
 
+        const guildMember = member.guild.members.cache.get(executor.id);
         if (!guildMember) {
             console.log("Executor is not a member of the guild.");
             return;
@@ -45,11 +47,18 @@ Client.on("guildMemberRemove", async (member) => {
             return;
         }
 
-        if (kickLimit > 0) {
+        if (kickLimit > 0 || kickLimit === -1) {
+            // Handle unlimited limit
             console.log(`${member.user.tag} was kicked by ${executor.tag}.`);
-            await db.set(`limits.${executor.id}.actions.kick`, kickLimit - 1);
 
-            const remaining = kickLimit - 1;
+            if (kickLimit > 0) {
+                await db.set(
+                    `limits.${executor.id}.actions.kick`,
+                    kickLimit - 1,
+                );
+            }
+
+            const remaining = kickLimit === -1 ? "Unlimited" : kickLimit - 1;
             executor.send(`You have ${remaining} more times to kick.`);
 
             // Also send the message to the limits channel if it exists
@@ -74,14 +83,14 @@ Client.on("guildMemberRemove", async (member) => {
 
                     const row = new ActionRowBuilder().addComponents(button);
 
-                    await limitsChannel.send({
-                        content: `User:\n\`\`\`${executor.username} ( ${executor.id} )\`\`\`\nReason:\n\`\`\`Kick\`\`\`\nPunishment:\n\`\`\`I removed its roles, and you can retrieve their roles from the button below if I made a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
+                    await kickchannel.send({
+                        content: `User:\n\`\`\`${executor.username} (${executor.id})\`\`\`\nReason:\n\`\`\`Kick\`\`\`\nPunishment:\n\`\`\`I removed their roles. You can restore them using the button below if it was a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
                         components: [row],
                     });
                 }
 
                 return executor.send(
-                    `You can't create roles anymore; your roles have been removed: ${removedRoles.join(", ")}. If this was a mistake, you can restore your roles with the button below.`,
+                    `You have exhausted your kick limit. Your roles have been removed: ${removedRoles.join(", ")}.`,
                 );
             } catch (error) {
                 console.error(
@@ -93,8 +102,8 @@ Client.on("guildMemberRemove", async (member) => {
     } else if (banLog) {
         const { executor } = banLog;
         if (executor.bot) return;
-        const guildMember = member.guild.members.cache.get(executor.id);
 
+        const guildMember = member.guild.members.cache.get(executor.id);
         if (!guildMember) {
             console.log("Executor is not a member of the guild.");
             return;
@@ -107,11 +116,15 @@ Client.on("guildMemberRemove", async (member) => {
             return;
         }
 
-        if (banLimit > 0) {
+        if (banLimit > 0 || banLimit === -1) {
+            // Handle unlimited limit
             console.log(`${member.user.tag} was banned by ${executor.tag}.`);
-            await db.set(`limits.${executor.id}.actions.ban`, banLimit - 1);
 
-            const remaining = banLimit - 1;
+            if (banLimit > 0) {
+                await db.set(`limits.${executor.id}.actions.ban`, banLimit - 1);
+            }
+
+            const remaining = banLimit === -1 ? "Unlimited" : banLimit - 1;
             executor.send(`You have ${remaining} more times to ban.`);
 
             // Also send the message to the limits channel if it exists
@@ -136,14 +149,14 @@ Client.on("guildMemberRemove", async (member) => {
 
                     const row = new ActionRowBuilder().addComponents(button);
 
-                    await limitsChannel.send({
-                        content: `User:\n\`\`\`${executor.username} ( ${executor.id} )\`\`\`\nReason:\n\`\`\`Ban\`\`\`\nPunishment:\n\`\`\`I removed its roles, and you can retrieve their roles from the button below if I made a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
+                    await banchannel.send({
+                        content: `User:\n\`\`\`${executor.username} (${executor.id})\`\`\`\nReason:\n\`\`\`Ban\`\`\`\nPunishment:\n\`\`\`I removed their roles. You can restore them using the button below if it was a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
                         components: [row],
                     });
                 }
 
                 return executor.send(
-                    `You can't create roles anymore; your roles have been removed: ${removedRoles.join(", ")}. If this was a mistake, you can restore your roles with the button below.`,
+                    `You have exhausted your ban limit. Your roles have been removed: ${removedRoles.join(", ")}.`,
                 );
             } catch (error) {
                 console.error(
@@ -168,7 +181,7 @@ Client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("restore_roles_")) {
         const userId = customId.split("_")[2];
 
-        if (!isOwner(interaction.user.id, db)) {
+        if (!(await isOwner(interaction.user.id, interaction.guild, db))) {
             return interaction.reply({
                 content: "This button is not for you.",
                 ephemeral: true,
@@ -189,7 +202,7 @@ Client.on("interactionCreate", async (interaction) => {
                 try {
                     await guildMember.roles.set(rolesToRestore);
                     await interaction.reply({
-                        content: "Your roles have been restored!",
+                        content: "Roles have been restored successfully!",
                         ephemeral: true,
                     });
                 } catch (error) {

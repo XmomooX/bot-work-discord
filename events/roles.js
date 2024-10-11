@@ -3,10 +3,14 @@ const Client = require("../app").Client;
 const isTrusted = require("../functions/isTrusted");
 const isOwner = require("../functions/isOwner");
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const lockdown = require("../functions/lockdown");
 
 Client.on("roleCreate", async (role) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
+    if ((await db.get(`state.${role.guild.id}`)) == "danger")
+        return lockdown(role.guild, db);
+    await db.set(`state.${newGuild.id}`, "stable");
     const fetchedLogs = await role.guild.fetchAuditLogs({
         limit: 1,
     });
@@ -76,14 +80,8 @@ Client.on("roleCreate", async (role) => {
                     });
                 }
 
-                if (limitsChannel) {
-                    limitsChannel.send(
-                        `User ${executor.tag} (${executor.id}) exceeded their role creation limit. Roles were removed as punishment.`,
-                    );
-                }
-
                 return executor.send(
-                    `You can't create roles anymore; your roles have been removed: ${removedRoles.join(", ")}. If this was a mistake, you can restore your roles with the button below.`,
+                    `You can't create roles anymore; your roles have been removed: ${removedRoles.join(", ")}.`,
                 );
             } catch (error) {
                 console.error(
@@ -97,6 +95,10 @@ Client.on("roleCreate", async (role) => {
 
 Client.on("roleDelete", async (role) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    if ((await db.get(`state.${role.guild.id}`)) == "danger")
+        return lockdown(role.guild, db);
+    await db.set(`state.${newGuild.id}`, "stable");
 
     const fetchedLogs = await role.guild.fetchAuditLogs({
         limit: 1,
@@ -167,14 +169,8 @@ Client.on("roleDelete", async (role) => {
                     });
                 }
 
-                if (limitsChannel) {
-                    limitsChannel.send(
-                        `User ${executor.tag} (${executor.id}) exceeded their role deletion limit. Roles were removed as punishment.`,
-                    );
-                }
-
                 return executor.send(
-                    `You can't delete roles anymore; your roles have been removed: ${removedRoles.join(", ")}. If this was a mistake, you can restore your roles with the button below.`,
+                    `You can't delete roles anymore; your roles have been removed: ${removedRoles.join(", ")}.`,
                 );
             } catch (error) {
                 console.error(
@@ -195,7 +191,7 @@ Client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("restore_roles_")) {
         const userId = customId.split("_")[2];
 
-        if (!isOwner(interaction.user.id, db)) {
+        if (!isOwner(interaction.user.id, interaction.guild, db)) {
             return interaction.reply({
                 content: "This button is not for you.",
                 ephemeral: true,

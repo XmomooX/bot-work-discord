@@ -27,20 +27,24 @@ module.exports = {
     ],
 
     async execute(interaction, db) {
-		const guildOwnerID = interaction.guild.ownerId;
-
-	  // if (guildOwnerID !== interaction.user.id || await isOwner(interaction.user.id, db);)
-    //   return await interaction.reply("Invalid permissions");
-		const logchannel = await db.get(`logchannel.${interaction.guild.id}`)
-	  const ch = interaction.guild.channels.cache.get(logchannel);
-      if (ch) {
-	  	ch.send(`${interaction.commandName} was used by ${interaction.user.username}`)
-	  }
-		const activityType = interaction.options.getString("type");
+        // if (await isOwner(interaction.user.id, interaction.guild, db);)
+        //   return await interaction.reply("Invalid permissions");
+        const logchannel = await db.get(`logchannel.${interaction.guild.id}`);
+        const ch = interaction.guild.channels.cache.get(logchannel);
+        if (ch) {
+            ch.send(
+                `${interaction.commandName} was used by ${interaction.user.username}`,
+            );
+        }
+        const activityType = interaction.options.getString("type");
         const activityDescription =
             interaction.options.getString("description");
 
-        const isOwnerResult = await isOwner(interaction.user.id, db);
+        const isOwnerResult = await isOwner(
+            interaction.user.id,
+            interaction.guild,
+            db,
+        );
         if (!isOwnerResult) {
             return interaction.reply({
                 content: "❌ You cannot use this command.",

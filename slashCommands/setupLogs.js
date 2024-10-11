@@ -1,142 +1,145 @@
-const isOwner = require("../functions/isOwner");
 const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType,
+  EmbedBuilder,
+  StringSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require("discord.js");
-const Client = require("../app").Client;
+const Client = require("../app").Client; // Import the client instance
 
 module.exports = {
-  name: "setuplogs",
-  description: "Set up logs category",
-  async execute(interaction, db, client) {
-    const guildId = interaction.guild.id;
-    const categoryId = await db.get(`logcat.${guildId}`);
-    const category = interaction.guild.channels.cache.get(categoryId);
+  name: "setup",
+  description: "View and set default limits",
+  async execute(interaction, db) {
+    const actions = [
+      "ban",
+      "kick",
+      "prune",
+      "vanityURL",
+      "timeout",
+      "create channel",
+      "delete channel",
+      "create role",
+      "delete role",
+    ];
 
-    if (category) {
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("changeCategory")
-          .setLabel("Change Category")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("cancel")
-          .setLabel("Cancel")
-          .setStyle(ButtonStyle.Danger),
-      );
+    const embed = new EmbedBuilder()
+      .setTitle("Default Limits")
+      .setDescription("Current default limits for actions:")
+      .setColor(0x00ff00);
 
-      await interaction.reply({
-        content: `A logs category already exists: **${category.name}**. Do you want to change it to a new one?`,
-        components: [row],
-        ephemeral: true,
+    for (const action of actions) {
+      const limit =
+        (await db.get(`defaultLimits.${action}`)) ??
+        {
+          ban: 1,
+          kick: 1,
+          prune: 0,
+          vanityURL: 0,
+          timeout: 10,
+          "create channel": 5,
+          "delete channel": 5,
+          "create role": 5,
+          "delete role": 5,
+        }[action];
+
+      embed.addFields({
+        name: action,
+        value: limit === -1 ? "Unlimited" : `${limit}`,
+        inline: true,
       });
-    } else {
-      await createLogCategory(interaction, db);
     }
 
-    Client.on("interactionCreate", async (buttonInteraction) => {
-      if (!buttonInteraction.isButton()) return;
-      if (buttonInteraction.guild.id !== guildId) return;
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("edit_default_limits")
+        .setLabel("Edit Default Limits")
+        .setStyle(ButtonStyle.Primary),
+    );
 
-      if (buttonInteraction.customId === "changeCategory") {
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("deleteOldCategory")
-            .setLabel("Delete Old Category")
-            .setStyle(ButtonStyle.Danger),
-          new ButtonBuilder()
-            .setCustomId("keepOldCategory")
-            .setLabel("Keep Old Category")
-            .setStyle(ButtonStyle.Secondary),
-        );
+    await interaction.reply({ embeds: [embed], components: [row] });
 
-        await buttonInteraction.update({
-          content: `Do you want to delete the old category: **${category.name}**?`,
-          components: [row],
+    // Create a collector to handle the button and menu interactions
+    const filter = (i) => i.user.id === interaction.user.id;
+    const collector = interaction.channel.createMessageComponentCollector({
+      filter,
+      time: 60000,
+    });
+
+    collector.on("collect", async (i) => {
+      if (i.customId === "edit_default_limits") {
+        // Acknowledge the button press
+        await i.deferUpdate();
+        await i.followUp({
+          content: "Select the action you want to set the default limit for:",
+          ephemeral: true,
+          components: [getActionSelectMenu()],
         });
-      } else if (buttonInteraction.customId === "deleteOldCategory") {
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId("confirmDelete")
-            .setLabel(`Last confirmation, delete ${category.name}`)
-            .setStyle(ButtonStyle.Danger),
-          new ButtonBuilder()
-            .setCustomId("cancelDelete")
-            .setLabel("Cancel")
-            .setStyle(ButtonStyle.Secondary),
-        );
+      } else if (i.isStringSelectMenu() && i.customId === "action_select") {
+        const selectedAction = i.values[0];
+        const modal = new ModalBuilder()
+          .setCustomId("set_limit_modal")
+          .setTitle(`Set Limit for ${selectedAction}`);
 
-        await buttonInteraction.update({
-          content: `Last confirmation, delete category: **${category.name}**?`,
-          components: [row],
-        });
-      } else if (buttonInteraction.customId === "confirmDelete") {
-        try {
-          await category.delete();
-          await buttonInteraction.update({
-            content: `Category **${category.name}** deleted. Setting up a new logs category...`,
-            components: [],
-          });
+        const limitInput = new TextInputBuilder()
+          .setCustomId("limit_input")
+          .setLabel("Enter the new limit (-1 for unlimited)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g., 5 or -1")
+          .setRequired(true);
 
-          await db.delete(`logcat.${guildId}`);
-          await createLogCategory(buttonInteraction, db);
-        } catch (e) {
-          console.error(e);
-          await buttonInteraction.update({
-            content: "An error occurred while deleting the category.",
-            components: [],
+        const row = new ActionRowBuilder().addComponents(limitInput);
+        modal.addComponents(row);
+
+        // Save the selected action as metadata for the user (you can also use a temporary storage)
+        Client.selectedAction = selectedAction;
+
+        await i.showModal(modal);
+      }
+    });
+
+    // Listen for modal submissions
+    Client.on("interactionCreate", async (i) => {
+      if (i.isModalSubmit() && i.customId === "set_limit_modal") {
+        const selectedAction = Client.selectedAction;
+        const limitValue = parseInt(i.fields.getTextInputValue("limit_input"));
+
+        if (isNaN(limitValue)) {
+          return i.reply({
+            content: "Invalid limit. Please enter a number.",
+            ephemeral: true,
           });
         }
-      } else if (
-        buttonInteraction.customId === "keepOldCategory" ||
-        buttonInteraction.customId === "cancel" ||
-        buttonInteraction.customId === "cancelDelete"
-      ) {
-        await buttonInteraction.update({
-          content: "Action cancelled.",
-          components: [],
+
+        await db.set(`defaultLimits.${selectedAction}`, limitValue);
+        await i.reply({
+          content: `Default limit for ${selectedAction} set to ${limitValue === -1 ? "Unlimited" : limitValue}.`,
+          ephemeral: true,
         });
       }
     });
   },
 };
 
-async function createLogCategory(interaction, db) {
-  try {
-    const category = await interaction.guild.channels.create({
-      name: "logs",
-      type: ChannelType.GuildCategory,
-    });
-    await db.set(`logcat.${interaction.guild.id}`, category.id);
-
-    const channels = [
-      { name: "kick-logs", key: "kickchannel" },
-      { name: "ban-logs", key: "banchannel" },
-      { name: "timeout-logs", key: "timechannel" },
-      { name: "roles-logs", key: "roleschannel" },
-      { name: "channels-logs", key: "channelschannel" },
-      { name: "general-logs", key: "guildchannel" },
-      { name: "limits-logs", key: "limitschannel" },
-    ];
-
-    for (const { name, key } of channels) {
-      const logChannel = await interaction.guild.channels.create({
-        name: name,
-        type: ChannelType.GuildText,
-        parent: category.id,
-      });
-      await db.set(`${key}.${interaction.guild.id}`, logChannel.id);
-    }
-
-    await interaction.followUp(
-      `Successfully set ${category.name} as logs category and created the logs channels.`,
-    );
-  } catch (e) {
-    console.error(e);
-    await interaction.followUp(
-      "An error occurred while creating the logs category.",
-    );
-  }
+// Function to generate the select menu for actions
+function getActionSelectMenu() {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("action_select")
+      .setPlaceholder("Choose an action")
+      .addOptions(
+        { label: "Ban", value: "ban" },
+        { label: "Kick", value: "kick" },
+        { label: "Prune", value: "prune" },
+        { label: "Vanity URL", value: "vanityURL" },
+        { label: "Timeout", value: "timeout" },
+        { label: "Create Channel", value: "create channel" },
+        { label: "Delete Channel", value: "delete channel" },
+        { label: "Create Role", value: "create role" },
+        { label: "Delete Role", value: "delete role" },
+      ),
+  );
 }

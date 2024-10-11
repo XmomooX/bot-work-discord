@@ -2,16 +2,16 @@ module.exports = {
   name: "ownershiplist",
   description: "List all bot owners",
   async execute(interaction, db) {
-	  const guildOwnerID = interaction.guild.ownerId;
-
-	  // if (guildOwnerID !== interaction.user.id || await isOwner(interaction.user.id, db);)
+    // if (await isOwner(interaction.user.id, interaction.guild, db);)
     //   return await interaction.reply("Invalid permissions");
-	  const logchannel = await db.get(`logchannel.${interaction.guild.id}`)
-	  const ch = interaction.guild.channels.cache.get(logchannel);
-      if (ch) {
-	  	ch.send(`${interaction.commandName} was used by ${interaction.user.username}`)
-	  }
-	  try {
+    const logchannel = await db.get(`logchannel.${interaction.guild.id}`);
+    const ch = interaction.guild.channels.cache.get(logchannel);
+    if (ch) {
+      ch.send(
+        `${interaction.commandName} was used by ${interaction.user.username}`,
+      );
+    }
+    try {
       const ownersData = await db.all();
       const owners = [];
       ownersData.map((e) => {

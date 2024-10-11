@@ -1,23 +1,26 @@
+// channel.js
 const db = require("../app").database;
 const Client = require("../app").Client;
 const isTrusted = require("../functions/isTrusted");
 const isOwner = require("../functions/isOwner");
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+} = require("discord.js");
+const lockdown = require("../functions/lockdown");
 
 Client.on("channelCreate", async (channel) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // Get the ban, kick, and limits channels from the database
-    const banChannelId = await db.get(`channelschannel.${channel.guild.id}`);
-    const limitsChannelId = await db.get(`limitschannel.${channel.guild.id}`);
+    if ((await db.get(`state.${channel.guild.id}`)) == "danger")
+        return lockdown(channel.guild, db);
+    await db.set(`state.${channel.id}`, "stable");
 
-    const banChannel = channel.guild.channels.cache.get(banChannelId);
-    const limitsChannel = channel.guild.channels.cache.get(limitsChannelId);
-
-    const fetchedLogs = await channel.guild.fetchAuditLogs({
-        limit: 1,
-    });
-
+    const fetchedLogs = await channel.guild.fetchAuditLogs({ limit: 1 });
     const channelLog = fetchedLogs.entries.find((log) => log.action === 10);
 
     if (channelLog) {
@@ -30,66 +33,63 @@ Client.on("channelCreate", async (channel) => {
             return;
         }
 
-        const limit = await isTrusted(db, executor.id, "channelcreate");
+        // Fetch the default limit for channel creation
+        const channelCreateLimit =
+            (await db.get(`defaultLimits.channelcreate`)) || 0;
 
-        if (limit === "Invalid action") {
-            console.log("Invalid action specified.");
-            return;
-        }
-
-        if (limit > 0) {
-            if (banChannel) {
-                banChannel.send(
-                    `${channel.name} was created by ${executor.tag}.`,
-                );
-            }
+        if (channelCreateLimit > 0) {
+            // Log the action
             await db.set(
                 `limits.${executor.id}.actions.channelcreate`,
-                limit - 1,
+                channelCreateLimit - 1,
             );
 
-            const remaining = limit - 1;
+            const remaining = channelCreateLimit - 1;
             executor.send(
                 `You have ${remaining} more times to create a channel.`,
             );
 
+            // Also send a log message if limits channel exists
+            const limitsChannelId = await db.get(
+                `limitschannel.${channel.guild.id}`,
+            );
+            const limitsChannel =
+                channel.guild.channels.cache.get(limitsChannelId);
             if (limitsChannel) {
                 limitsChannel.send(
                     `${executor.tag} has ${remaining} remaining actions for creating channels.`,
                 );
             }
         } else {
+            // Exceeded limit: remove roles
             try {
                 const removedRoles = guildMember.roles.cache
                     .map((role) => role.id)
                     .filter((roleId) => roleId !== guildMember.guild.id);
                 await guildMember.roles.set([]);
 
-                if (banChannel) {
+                const kickChannelId = await db.get(
+                    `channelschannel.${channel.guild.id}`,
+                );
+                const kickChannel =
+                    channel.guild.channels.cache.get(kickChannelId);
+
+                if (kickChannel) {
                     const button = new ButtonBuilder()
                         .setCustomId(`restore_roles_${executor.id}`)
                         .setLabel("Restore Roles")
                         .setStyle(ButtonStyle.Primary);
 
                     const row = new ActionRowBuilder().addComponents(button);
-
-                    await limitsChannel.send({
-                        content: `User:\n\`\`\`${executor.username} ( ${executor.id} )\`\`\`\nReason:\n\`\`\`Channel Create\`\`\`\nPunishment:\n\`\`\`I removed its roles, and you can retrieve their roles from the button below if I made a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
+                    await kickChannel.send({
+                        content: `User:\n\`\`\`${executor.username} ( ${executor.id} )\`\`\`\nReason:\n\`\`\`Channel Create\`\`\`\nPunishment:\n\`\`\`I removed its roles. You can retrieve them with the button below if I made a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
                         components: [row],
                     });
                 }
 
-                await executor.send({
-                    content: `You can't create channels anymore; your roles have been removed: ${removedRoles.join(", ")}. If this was a mistake, you can restore your roles with the button below.`,
-                    components: [
-                        new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`restore_roles_${executor.id}`)
-                                .setLabel("Restore Roles")
-                                .setStyle(ButtonStyle.Primary),
-                        ),
-                    ],
-                });
+                await executor.send(
+                    `You can't create channels anymore; your roles have been removed: ${removedRoles.join(", ")}.`,
+                );
             } catch (error) {
                 console.error(
                     `Failed to remove roles from ${executor.tag}:`,
@@ -103,16 +103,11 @@ Client.on("channelCreate", async (channel) => {
 Client.on("channelDelete", async (channel) => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    const kickChannelId = await db.get(`channelschannel.${channel.guild.id}`);
-    const limitsChannelId = await db.get(`limitschannel.${channel.guild.id}`);
+    if ((await db.get(`state.${channel.guild.id}`)) == "danger")
+        return lockdown(channel.guild, db);
+    await db.set(`state.${channel.id}`, "stable");
 
-    const kickChannel = channel.guild.channels.cache.get(kickChannelId);
-    const limitsChannel = channel.guild.channels.cache.get(limitsChannelId);
-
-    const fetchedLogs = await channel.guild.fetchAuditLogs({
-        limit: 1,
-    });
-
+    const fetchedLogs = await channel.guild.fetchAuditLogs({ limit: 1 });
     const channelLog = fetchedLogs.entries.find((log) => log.action === 12);
 
     if (channelLog) {
@@ -125,40 +120,46 @@ Client.on("channelDelete", async (channel) => {
             return;
         }
 
-        const limit = await isTrusted(db, executor.id, "channeldelete");
+        // Fetch the default limit for channel deletion
+        const channelDeleteLimit =
+            (await db.get(`defaultLimits.channeldelete`)) || 0;
 
-        if (limit === "Invalid action") {
-            console.log("Invalid action specified.");
-            return;
-        }
-
-        if (limit > 0) {
-            if (kickChannel) {
-                kickChannel.send(
-                    `${channel.name} was deleted by ${executor.tag}.`,
-                );
-            }
+        if (channelDeleteLimit > 0) {
+            // Log the action
             await db.set(
                 `limits.${executor.id}.actions.channeldelete`,
-                limit - 1,
+                channelDeleteLimit - 1,
             );
 
-            const remaining = limit - 1;
+            const remaining = channelDeleteLimit - 1;
             executor.send(
                 `You have ${remaining} more times to delete a channel.`,
             );
 
+            // Also send a log message if limits channel exists
+            const limitsChannelId = await db.get(
+                `limitschannel.${channel.guild.id}`,
+            );
+            const limitsChannel =
+                channel.guild.channels.cache.get(limitsChannelId);
             if (limitsChannel) {
                 limitsChannel.send(
                     `${executor.tag} has ${remaining} remaining actions for deleting channels.`,
                 );
             }
         } else {
+            // Exceeded limit: remove roles
             try {
                 const removedRoles = guildMember.roles.cache
                     .map((role) => role.id)
                     .filter((roleId) => roleId !== guildMember.guild.id);
                 await guildMember.roles.set([]);
+
+                const kickChannelId = await db.get(
+                    `channelschannel.${channel.guild.id}`,
+                );
+                const kickChannel =
+                    channel.guild.channels.cache.get(kickChannelId);
 
                 if (kickChannel) {
                     const button = new ButtonBuilder()
@@ -167,24 +168,15 @@ Client.on("channelDelete", async (channel) => {
                         .setStyle(ButtonStyle.Primary);
 
                     const row = new ActionRowBuilder().addComponents(button);
-
-                    await limitsChannel.send({
-                        content: `User:\n\`\`\`${executor.username} ( ${executor.id} )\`\`\`\nReason:\n\`\`\`Channel Delete\`\`\`\nPunishment:\n\`\`\`I removed its roles, and you can retrieve their roles from the button below if I made a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
+                    await kickChannel.send({
+                        content: `User:\n\`\`\`${executor.username} ( ${executor.id} )\`\`\`\nReason:\n\`\`\`Channel Delete\`\`\`\nPunishment:\n\`\`\`I removed its roles. You can retrieve them with the button below if I made a mistake.\`\`\`\nRoles:\n\`\`\`${removedRoles.join("\n") || "none"}\`\`\``,
                         components: [row],
                     });
                 }
 
-                await executor.send({
-                    content: `You can't delete channels anymore; your roles have been removed: ${removedRoles.join(", ")}. If this was a mistake, you can restore your roles with the button below.`,
-                    components: [
-                        new ActionRowBuilder().addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`restore_roles_${executor.id}`)
-                                .setLabel("Restore Roles")
-                                .setStyle(ButtonStyle.Primary),
-                        ),
-                    ],
-                });
+                await executor.send(
+                    `You can't delete channels anymore; your roles have been removed: ${removedRoles.join(", ")}.`,
+                );
             } catch (error) {
                 console.error(
                     `Failed to remove roles from ${executor.tag}:`,
@@ -204,7 +196,7 @@ Client.on("interactionCreate", async (interaction) => {
     if (customId.startsWith("restore_roles_")) {
         const userId = customId.split("_")[2];
 
-        if (!isOwner(interaction.user.id, db)) {
+        if (!isOwner(interaction.user.id, interaction.guild, db)) {
             return interaction.reply({
                 content: "This button is not for you.",
                 ephemeral: true,
